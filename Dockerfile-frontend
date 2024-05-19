@@ -1,0 +1,41 @@
+# syntax=docker/dockerfile:1
+
+FROM debian:12 as builder
+
+# Define the DEBUG environment variable
+ARG DEBUG
+
+# Prevent the deletion of downloaded packages, keep the downloaded package files after installing them
+RUN rm -f /etc/apt/apt.conf.d/docker-clean; echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' > /etc/apt/apt.conf.d/keep-cache
+
+# Mount the cache directories, update the package list and install gcc
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+  --mount=type=cache,target=/var/lib/apt,sharing=locked \
+  apt update && apt-get --no-install-recommends install -y glibc-doc libc6-dev gcc build-essential openssh-client git
+
+# Download the public key for github.com (prevents the prompt to add the host to known_hosts)
+RUN mkdir -p -m 0600 ~/.ssh && ssh-keyscan github.com >> ~/.ssh/known_hosts
+
+# Clone the repository into the current directory
+RUN --mount=type=ssh git clone git@github.com:PiasekDev/Maciej-Piasecki-PAwChO-Zad1.git ./repo
+
+# Compile using gcc, optimize for size, make a static binary, optionally define the DEBUG macro (if DEBUG buildarg is set), strip the binary
+RUN gcc -Os -static -o server ./repo/src/server.c ${DEBUG:+-D DEBUG} && strip server
+
+FROM scratch as final
+
+# Copy the compiled binary from the builder
+COPY --from=builder /server /server
+
+# Describe which port the application is listening on
+EXPOSE 80
+
+# Set command to run when the container starts
+CMD ["/server"]
+
+# Set healthcheck (adding the "healthcheck" argument to /server will run the healthcheck instead of the server)
+HEALTHCHECK --interval=15s --timeout=5s \
+	CMD ["/server", "healthcheck"]
+
+# Label with author name, middle name, surname and index number
+LABEL org.opencontainers.image.authors="Maciej Krzysztof Piasecki (97701)"
